@@ -1,0 +1,6 @@
+# Vendored from mattpocock/skills (MIT) — harness interface metadata for the code-review skill.
+# Targets other agents (e.g. OpenAI/Codex-style harnesses); unused by this kit.
+# See ../../ATTRIBUTION.md for provenance.
+interface:
+  display_name: "Code Review"
+  short_description: "Review a diff on standards and spec"
