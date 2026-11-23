@@ -351,6 +351,56 @@ class AppDatabase extends _$AppDatabase {
       ),
     );
   }
+
+  // =========================================================================
+  // BACKUP & RESTORE OPERATIONS (spec.md Section 6)
+  // =========================================================================
+
+  /// Get all songs (both active and archived) for backup export.
+  Future<List<Song>> getAllSongs() {
+    return (select(songs)..orderBy([(s) => OrderingTerm.asc(s.id)])).get();
+  }
+
+  /// Get all playlists for backup export.
+  Future<List<Playlist>> getAllPlaylists() {
+    return (select(playlists)..orderBy([(p) => OrderingTerm.asc(p.id)])).get();
+  }
+
+  /// Get all playlist items for backup export.
+  Future<List<PlaylistItem>> getAllPlaylistItems() {
+    return (select(playlistItems)..orderBy([
+          (i) => OrderingTerm.asc(i.playlistId),
+          (i) => OrderingTerm.asc(i.position),
+        ]))
+        .get();
+  }
+
+  /// Atomically restores all database tables from backup companions.
+  Future<void> restoreAllData({
+    required List<SongsCompanion> songCompanions,
+    required List<PlaylistsCompanion> playlistCompanions,
+    required List<PlaylistItemsCompanion> itemCompanions,
+  }) {
+    return transaction(() async {
+      // Deletions child -> parent to respect foreign key constraints
+      await delete(playlistItems).go();
+      await delete(playlists).go();
+      await delete(songs).go();
+
+      // Insertions parent -> child
+      for (final s in songCompanions) {
+        await into(songs).insert(s);
+      }
+      for (final p in playlistCompanions) {
+        await into(playlists).insert(p);
+      }
+      for (final item in itemCompanions) {
+        await into(playlistItems).insert(item);
+      }
+
+      await updateSettings(lastBackupAt: DateTime.now());
+    });
+  }
 }
 
 /// Helper composite class representing a playlist item joined with its song.

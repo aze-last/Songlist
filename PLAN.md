@@ -1,77 +1,81 @@
-# PLAN.md — Step 2: Songs Library, "Browse UG" & "Paste Link"
+# PLAN.md — Step 6: Update Feature, Installer, Release Scripts & Keystore Docs
 
 ## 1. Spec & Objective
-- Problem: The app needs a complete Song library interface allowing musicians to search, view, edit, and archive songs, plus two distinct methods to add songs: "Paste link" with instant normalization & duplicate prevention, and "Browse UG" via a secure, sandboxed in-app WebView.
-- Hypothesis: Providing a Material 3 songs list with reactive Riverpod state, instant URL validation, and a strict WebView browser allows users to build their setlist catalog while adhering to all UG compliance rules.
+- Problem: As an independent worship setlist tool distributed outside the Play Store, the app needs an in-app updater leveraging public GitHub Releases (download with SHA-256 integrity verification, FileProvider installation) and a reproducible release workflow.
+- Hypothesis: Providing a semver-based update service, verified checksum downloader, Android FileProvider installer, release build scripts, and keystore protection ensures seamless and secure ongoing app delivery.
 - Invariants & Constraints:
-  - WebView isolation: Navigation strictly allowed only to `tabs.ultimate-guitar.com` and `www.ultimate-guitar.com` over HTTPS.
-  - Zero JavaScript channels, zero injected scraping scripts, file access and content access disabled in WebView.
-  - Non-UG links intercepted and offered to open in external system browser.
-  - "Save this song" enabled ONLY when current URL path starts with `/tab/`.
-  - Duplicate detection by normalized URL with helpful feedback.
-  - Confirm dialog before archiving.
-  - Portrait lock and Material 3 theme in `main.dart`.
+  - Repository coordinates isolated in `lib/config/update_config.dart` (`aze-last`, placeholder `<REPO_NAME>`). Zero tokens/keys.
+  - Releases must be public, non-draft, non-prerelease, and contain exactly one `.apk` and one `.sha256` asset.
+  - Real semver comparison (`pub_semver`): Never downgrade. Ignore malformed tags. Respect skipped versions.
+  - Download restricted to HTTPS allowed GitHub hosts (`github.com`, `objects.githubusercontent.com`, `github-releases.githubusercontent.com`, `api.github.com`).
+  - SHA-256 verification: Mismatch or missing checksum deletes the file immediately and aborts. Never install unverified APK.
+  - System installation via FileProvider and `REQUEST_INSTALL_PACKAGES`. Guide user if permission not granted.
+  - Update dialogs NEVER appear while in Service Mode.
+  - Release keystore strictly guarded: release build fails if `android/key.properties` is missing.
+  - Release scripts (`scripts/release.ps1` and `scripts/release.sh`) automate versioned APK and `.sha256` artifact generation.
+  - Pass `.agents/team/diff-scan.ps1`.
 
 ## 2. Scoped Tasks
 
-### T1 — State Layer: Riverpod Database & Song Providers (surface: `lib/presentation/providers/`, `test/presentation/songs_provider_test.dart`)
-- Files: `lib/presentation/providers/database_provider.dart`, `lib/presentation/providers/songs_provider.dart`, `test/presentation/songs_provider_test.dart`
+### T1 — Config & Domain: Semver, Checksum & Host Validation (surface: `lib/config/update_config.dart`, `lib/domain/update_checker.dart`, `test/domain/update_checker_test.dart`)
+- Files:
+  - `lib/config/update_config.dart`
+  - `lib/domain/update_checker.dart`
+  - `test/domain/update_checker_test.dart`
 - Action:
-  - Create Riverpod providers for `AppDatabase`, `songsListStreamProvider`, `songSearchQueryProvider`, and `filteredSongsProvider`.
-  - Provide helper methods for adding (with duplicate check), editing, archiving, and restoring songs.
-- Test: Unit tests (RED first) validating filtered search results, duplicate URL rejection, and reactive archiving.
+  - Pure Dart domain class: `UpdateChecker`.
+  - Semver evaluation (no downgrade, ignore malformed tags, skip version check).
+  - GitHub release JSON parsing (require `.apk` and `.sha256`, reject drafts/prereleases).
+  - SHA-256 hash calculation and verification.
+  - Host allowlisting.
+  - 24-hour throttle calculation.
+- Test: Unit tests (RED first) covering all semver edge cases, checksum match/mismatch, host rules, and asset parsing.
+- Gate: All unit tests pass.
+
+### T2 — Native Android & Build Configuration (surface: `android/`)
+- Files:
+  - `android/app/build.gradle.kts`
+  - `android/app/src/main/AndroidManifest.xml`
+  - `android/app/src/main/res/xml/file_paths.xml`
+  - `android/app/src/main/kotlin/com/worship/worship_setlist/MainActivity.kt`
+- Action:
+  - Add `REQUEST_INSTALL_PACKAGES` and FileProvider in `AndroidManifest.xml`.
+  - Create `file_paths.xml` for cache directory exposure.
+  - Implement installer MethodChannel in `MainActivity.kt`.
+  - Configure `build.gradle.kts` to require `android/key.properties` for release builds.
+- Test: Android build script verification and package installation channel bindings.
+- Gate: Compiles cleanly.
+
+### T3 — Data & Service: Update Service & Downloader (surface: `lib/data/services/update_service.dart`, `test/data/update_service_test.dart`)
+- Files:
+  - `lib/data/services/update_service.dart`
+  - `test/data/update_service_test.dart`
+- Action:
+  - `checkForUpdate({bool manual = false})` with mockable HTTP client.
+  - Download stream with progress tracking, SHA-256 verification, and abort cleanup on mismatch.
+  - Offer backup export option before installing.
+- Test: Mocked HTTP tests covering online update detection, up-to-date handling, 404/403/offline handling, checksum match/mismatch file deletion.
 - Gate: All tests pass.
 
-### T2 — UI: Songs Library Screen & Edit/Archive Dialogs (surface: `lib/presentation/screens/songs/`)
-- Files: `lib/presentation/screens/songs/songs_screen.dart`, `lib/presentation/screens/songs/edit_song_dialog.dart`, `lib/presentation/screens/songs/song_card.dart`
+### T4 — Presentation: Update Dialogs, Settings Integration & Service Mode Guard (surface: `lib/presentation/`, `test/presentation/update_ui_test.dart`)
+- Files:
+  - `lib/presentation/widgets/update_dialog.dart`
+  - `lib/presentation/widgets/update_progress_dialog.dart`
+  - `lib/presentation/screens/settings/settings_screen.dart`
+  - `lib/presentation/screens/home_shell.dart`
+  - `test/presentation/update_ui_test.dart`
 - Action:
-  - Build searchable songs list showing title, key note chip, and notes preview.
-  - Add confirmation dialog before archiving ("Archive song?").
-  - Add Edit dialog to modify title, URL, notes, and key note.
-  - FloatingActionButton with menu or bottom sheet: "Browse UG" and "Paste Link".
-- Test: Widget tests verifying search filtering, archive confirmation, and edit dialog interactions.
-- Gate: Widget tests pass.
-
-### T3 — UI: "Paste Link" Dialog (surface: `lib/presentation/screens/songs/paste_link_dialog.dart`, `test/presentation/paste_link_test.dart`)
-- Files: `lib/presentation/screens/songs/paste_link_dialog.dart`, `test/presentation/paste_link_test.dart`
-- Action:
-  - Form with URL, Title, Key note, and Notes inputs.
-  - Real-time/on-submit validation using `UrlValidator.validateAndNormalize`.
-  - Check for duplicate normalized URLs in the database; show error if already in library.
-  - Save valid song and close.
-- Test: Widget tests (RED first) covering valid submission, invalid URL error display, and duplicate URL error display.
+  - Dialog displaying release notes, current vs new version, "Update now", "Later", "Skip this version".
+  - Wire manual check button in `SettingsScreen`.
+  - Wire 24h background auto-check on app launch in `HomeShell`, strictly disabled when in Service Mode.
+- Test: Widget tests verifying update dialog actions, version skip persistence, and settings integration.
 - Gate: All tests pass.
 
-### T4 — UI: "Browse UG" In-App WebView Screen (surface: `lib/presentation/screens/songs/browse_ug_screen.dart`, `test/presentation/browse_ug_test.dart`)
-- Files: `lib/presentation/screens/songs/browse_ug_screen.dart`, `test/presentation/browse_ug_test.dart`
+### T5 — Release Workflow Scripts & Pre-Flight Gate (surface: `scripts/`, `.agents/team/diff-scan.ps1`)
+- Files:
+  - `scripts/release.ps1`
+  - `scripts/release.sh`
 - Action:
-  - Configure `WebViewController`:
-    - JavaScriptMode.unrestricted (UG requires JS).
-    - Navigation delegate: allow only HTTPS on `tabs.ultimate-guitar.com` and `www.ultimate-guitar.com`.
-    - Block all other URLs and display prompt: "Open external link in browser?" using `url_launcher`.
-    - Android platform specific: disable file access (`setAllowFileAccess(false)`) and content access (`setAllowContentAccess(false)`).
-    - Handle loading errors with offline/error view and "Retry" button.
-  - Persistent bottom/top action: "Save this song".
-    - Active only when current URL path starts with `/tab/`.
-    - On tap, captures current URL and page title, presents a confirmation bottom sheet to review/edit Title, Key note, Notes before saving.
-    - Rejects duplicates by normalized URL.
-- Test: Tests verifying navigation policy (allow UG, block third-party), error handler, and tab path check.
-- Gate: All tests pass.
-
-### T5 — Application Root & Orientation Lock (surface: `lib/main.dart`)
-- Files: `lib/main.dart`
-- Action:
-  - Lock portrait orientations (`portraitUp`, `portraitDown`).
-  - Configure Material 3 `ThemeData`.
-  - Wrap app in `ProviderScope`.
-  - Set `SongsScreen` as home screen.
-- Gate: `flutter analyze` passes cleanly.
-
-### T6 — Pre-Flight Gate Verification (surface: `.agents/team/diff-scan.ps1`)
-- Action: Run `diff-scan.ps1` to ensure `dart format`, `flutter analyze`, and `flutter test` are completely GREEN.
+  - Automate building release APK, computing SHA-256, packaging into `releases/`, and outputting `gh release create` command.
+  - Run `.agents/team/diff-scan.ps1`.
 - Gate: Exit 0 (`RESULT: GREEN`).
-
-## 3. Edge Cases & Safety
-- WebView Host Enforcement: Host check must be case-insensitive and strictly match the two allowed domains. Subdomains other than `tabs` or `www` (e.g. `malicious.ultimate-guitar.com.attacker.com` or `forum.ultimate-guitar.com`) must be blocked.
-- Duplicate Detection: Normalize URLs before querying database to avoid storing multiple entries for URLs differing only by query parameters or hash fragments.
-- Offline Handling: In the WebView, when `onWebResourceError` is triggered, show a clear retry screen instead of crashing or showing a blank page.

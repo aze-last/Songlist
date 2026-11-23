@@ -12,9 +12,7 @@ void main() {
   setUp(() {
     db = AppDatabase(NativeDatabase.memory());
     container = ProviderContainer(
-      overrides: [
-        databaseProvider.overrideWithValue(db),
-      ],
+      overrides: [databaseProvider.overrideWithValue(db)],
     );
   });
 
@@ -56,6 +54,8 @@ void main() {
     test('search query filters active songs by title', () async {
       final controller = container.read(songsControllerProvider.notifier);
 
+      final sub = container.listen(filteredSongsProvider, (prev, next) {});
+
       await controller.addSong(
         rawUrl: 'https://tabs.ultimate-guitar.com/tab/hillsong/what-a-beautiful-name-1',
         title: 'What A Beautiful Name',
@@ -65,46 +65,72 @@ void main() {
         title: 'Goodness of God',
       );
 
-      // Wait for stream emission
-      await Future<void>.delayed(const Duration(milliseconds: 50));
+      // Wait for stream to deliver the 2 songs
+      for (var i = 0; i < 50; i++) {
+        if ((container.read(filteredSongsProvider).value?.length ?? 0) == 2) {
+          break;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+      }
 
       // Initial filter: all 2 songs
       var filtered = container.read(filteredSongsProvider).value;
       expect(filtered?.length, 2);
 
       // Apply search query
-      container.read(songSearchQueryProvider.notifier).state = 'beautiful';
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+      container.read(songSearchQueryProvider.notifier).setQuery('beautiful');
+      await Future<void>.delayed(const Duration(milliseconds: 20));
 
       filtered = container.read(filteredSongsProvider).value;
       expect(filtered?.length, 1);
       expect(filtered?.first.title, 'What A Beautiful Name');
+
+      sub.close();
     });
 
-    test('archiveSong removes song from active list but retains data in DB', () async {
-      final controller = container.read(songsControllerProvider.notifier);
+    test(
+      'archiveSong removes song from active list but retains data in DB',
+      () async {
+        final controller = container.read(songsControllerProvider.notifier);
 
-      await controller.addSong(
-        rawUrl: 'https://tabs.ultimate-guitar.com/tab/artist/song-archived-1',
-        title: 'To Archive',
-      );
+        final sub = container.listen(filteredSongsProvider, (prev, next) {});
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      final songs = container.read(filteredSongsProvider).value;
-      expect(songs?.length, 1);
-      final songId = songs!.first.id;
+        await controller.addSong(
+          rawUrl: 'https://tabs.ultimate-guitar.com/tab/artist/song-archived-1',
+          title: 'To Archive',
+        );
 
-      // Archive
-      final success = await controller.archiveSong(songId);
-      expect(success, isTrue);
+        for (var i = 0; i < 50; i++) {
+          if ((container.read(filteredSongsProvider).value?.length ?? 0) == 1) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
 
-      await Future<void>.delayed(const Duration(milliseconds: 50));
-      final afterArchive = container.read(filteredSongsProvider).value;
-      expect(afterArchive?.isEmpty, isTrue);
+        final songs = container.read(filteredSongsProvider).value;
+        expect(songs?.length, 1);
+        final songId = songs!.first.id;
 
-      // Verify song is still in DB with archived = true
-      final dbSong = await db.getSongById(songId);
-      expect(dbSong?.archived, isTrue);
-    });
+        // Archive
+        final success = await controller.archiveSong(songId);
+        expect(success, isTrue);
+
+        for (var i = 0; i < 50; i++) {
+          if ((container.read(filteredSongsProvider).value?.length ?? 1) == 0) {
+            break;
+          }
+          await Future<void>.delayed(const Duration(milliseconds: 20));
+        }
+
+        final afterArchive = container.read(filteredSongsProvider).value;
+        expect(afterArchive?.isEmpty, isTrue);
+
+        // Verify song is still in DB with archived = true
+        final dbSong = await db.getSongById(songId);
+        expect(dbSong?.archived, isTrue);
+
+        sub.close();
+      },
+    );
   });
 }

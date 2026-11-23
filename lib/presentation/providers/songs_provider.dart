@@ -22,8 +22,8 @@ class SongSearchQueryNotifier extends Notifier<String> {
 /// Provider for the search query.
 final songSearchQueryProvider =
     NotifierProvider<SongSearchQueryNotifier, String>(
-  SongSearchQueryNotifier.new,
-);
+      SongSearchQueryNotifier.new,
+    );
 
 /// Filtered list of songs matching the current search query.
 final filteredSongsProvider = Provider<AsyncValue<List<Song>>>((ref) {
@@ -163,6 +163,4 @@ class SongsController extends Notifier<AsyncValue<void>> {
 
 /// Provider for the SongsController.
 final songsControllerProvider =
-    NotifierProvider<SongsController, AsyncValue<void>>(
-  SongsController.new,
-);
+    NotifierProvider<SongsController, AsyncValue<void>>(SongsController.new);
